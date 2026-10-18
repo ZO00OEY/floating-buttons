@@ -6,7 +6,7 @@
 
 ## 使用
 
-1. 在 Windows 上运行 `build.ps1`，生成 `FloatingClipboard.exe`；然后双击 EXE 启动。需要系统自带的 .NET Framework 和 C# 编译器。
+1. 从仓库的 Releases 下载 Windows 压缩包并解压，双击 `FloatingClipboard.exe` 启动。也可以下载源码，在 Windows 上运行 `build.ps1` 自行生成 EXE；源码构建需要系统自带的 .NET Framework 和 C# 编译器。
 2. 右键悬浮条或托盘图标，打开“设置”。可调整按钮大小、间距、背景透明度和显隐；点击每行右侧的快捷键框，按下想录制的单键或组合键，再点“保存设置”。右 Ctrl 等单独使用的修饰键，松开后完成录制。
 3. 把按钮拖到合适位置。位置和设置会保存在本机的 `shortcuts.ini`，重启后恢复。
 
