@@ -341,7 +341,9 @@ internal sealed class FloatingBar : Form
         if (showRequest != null)
         {
             string iconFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
-            Icon = File.Exists(iconFile) ? new Icon(iconFile) : SystemIcons.Application;
+            Icon = File.Exists(iconFile) ? new Icon(iconFile)
+                : System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            if (Icon == null) Icon = SystemIcons.Application;
             tray.Icon = Icon;
             tray.Text = "悬浮按钮 · 正在运行";
             tray.ContextMenuStrip = new ContextMenuStrip();

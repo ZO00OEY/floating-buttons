@@ -6,7 +6,7 @@
 
 ## 使用
 
-1. 从仓库的 Releases 下载 Windows 压缩包并解压，双击 `FloatingClipboard.exe` 启动。也可以下载源码，在 Windows 上运行 `build.ps1` 自行生成 EXE；源码构建需要系统自带的 .NET Framework 和 C# 编译器。
+1. 从仓库的 Releases 直接下载 `FloatingClipboard.exe` 并双击启动；Windows 压缩包则附带图标、说明和示例配置。也可以下载源码，在 Windows 上运行 `build.ps1` 自行生成 EXE；源码构建需要系统自带的 .NET Framework 和 C# 编译器。
 2. 右键悬浮条或托盘图标，打开“设置”。可调整按钮大小、间距、背景透明度和显隐；点击每行右侧的快捷键框，按下想录制的单键或组合键，再点“保存设置”。右 Ctrl 等单独使用的修饰键，松开后完成录制。
 3. 把按钮拖到合适位置。位置和设置会保存在本机的 `shortcuts.ini`，重启后恢复。
 
@@ -14,6 +14,6 @@
 
 ## 配置与源码
 
-`shortcuts.example.ini` 展示了六个按钮的默认快捷键。实际配置文件 `shortcuts.ini` 在本机保存，不会上传到仓库；推荐在设置窗口修改。`icon.svg` 是图标源文件，`icon.ico` 用于 Windows 托盘和窗口。
+`shortcuts.example.ini` 展示了六个按钮的默认快捷键。实际配置文件 `shortcuts.ini` 在本机保存，不会上传到仓库；推荐在设置窗口修改。`icon.svg` 是图标源文件，`icon.ico` 用于 Windows 托盘和窗口；单独运行 EXE 时会从程序内提取图标。
 
 源码是 `FloatingClipboard.cs`，构建脚本是 `build.ps1`。运行 `FloatingClipboard.exe --self-test` 可检查快捷键序列、拖动边界和设置合并；自检不会发送按键或安装全局输入钩子。实际截图和语音交互需在你使用的远程串流环境中试用。
