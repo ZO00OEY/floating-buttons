@@ -1,0 +1,4 @@
+.codex/output/
+*.exe
+*.pdb
+shortcuts.ini
