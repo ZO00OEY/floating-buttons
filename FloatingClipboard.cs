@@ -474,42 +474,63 @@ internal sealed class FloatingBar : Form
             settings.BringToFront(); settings.Activate(); return;
         }
         int originalOpacity = backgroundOpacity, originalSize = buttonSize, originalGap = buttonGap, originalMask = visibleMask;
-        settings = new Form { Text = "悬浮按钮设置", ClientSize = new Size(480, 610),
+        settings = new Form { Text = "悬浮按钮设置", AutoScaleMode = AutoScaleMode.None,
             FormBorderStyle = FormBorderStyle.FixedDialog, ShowInTaskbar = true, MaximizeBox = false, MinimizeBox = false,
             StartPosition = FormStartPosition.Manual, TopMost = true, Icon = Icon,
             BackColor = Color.FromArgb(245, 248, 251), Font = new Font("Microsoft YaHei UI", 10f) };
         Rectangle area = CurrentScreen().WorkingArea;
-        settings.Location = new Point(area.Left + (area.Width - settings.Width) / 2, area.Top + (area.Height - settings.Height) / 2);
-        Label hint = new Label { Text = "调整外观，或点击快捷键框直接录制按键", Location = new Point(24, 15), AutoSize = true,
+        int width = Math.Min(500, Math.Max(300, area.Width - 32));
+        int margin = 20, innerWidth = width - margin * 2 - SystemInformation.VerticalScrollBarWidth;
+        int lineHeight = Math.Max(settings.Font.Height + 8,
+            TextRenderer.MeasureText("按钮大小：200%（文字重新绘制）", settings.Font,
+                new Size(innerWidth, int.MaxValue), TextFormatFlags.WordBreak).Height + 4);
+        int sliderHeight = Math.Max(42, settings.Font.Height + 18);
+        int rowHeight = Math.Max(38, settings.Font.Height + 18);
+        int y = 16;
+        Panel content = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        Label hint = new Label { Text = "调整外观，或点击快捷键框直接录制按键", Location = new Point(margin, y),
             Font = new Font("Microsoft YaHei UI", 9f), ForeColor = Color.FromArgb(99, 116, 128) };
-        Label opacityLabel = new Label { Location = new Point(24, 48), AutoSize = true, ForeColor = Color.FromArgb(35, 65, 82) };
-        // 高 DPI 下 TrackBar 的默认自动高度会盖住下一行标题。
-        TrackBar opacitySlider = new TrackBar { AutoSize = false, Location = new Point(20, 76), Size = new Size(440, 42),
+        hint.Size = new Size(innerWidth, TextRenderer.MeasureText(hint.Text, hint.Font,
+            new Size(innerWidth, int.MaxValue), TextFormatFlags.WordBreak).Height + 4);
+        y += hint.Height + 14;
+        Label opacityLabel = new Label { Location = new Point(margin, y), Size = new Size(innerWidth, lineHeight), ForeColor = Color.FromArgb(35, 65, 82) };
+        y += lineHeight;
+        TrackBar opacitySlider = new TrackBar { AutoSize = false, Location = new Point(margin, y), Size = new Size(innerWidth, sliderHeight),
             Minimum = 30, Maximum = 100, TickStyle = TickStyle.None, Value = backgroundOpacity };
-        Label sizeLabel = new Label { Location = new Point(24, 128), AutoSize = true, ForeColor = Color.FromArgb(35, 65, 82) };
-        TrackBar sizeSlider = new TrackBar { AutoSize = false, Location = new Point(20, 156), Size = new Size(440, 42),
+        y += sliderHeight + 14;
+        Label sizeLabel = new Label { Location = new Point(margin, y), Size = new Size(innerWidth, lineHeight), ForeColor = Color.FromArgb(35, 65, 82) };
+        y += lineHeight;
+        TrackBar sizeSlider = new TrackBar { AutoSize = false, Location = new Point(margin, y), Size = new Size(innerWidth, sliderHeight),
             Minimum = 70, Maximum = 200, TickStyle = TickStyle.None, Value = buttonSize };
-        Label gapLabel = new Label { Location = new Point(24, 208), AutoSize = true, ForeColor = Color.FromArgb(35, 65, 82) };
-        TrackBar gapSlider = new TrackBar { AutoSize = false, Location = new Point(20, 236), Size = new Size(440, 42),
+        y += sliderHeight + 14;
+        Label gapLabel = new Label { Location = new Point(margin, y), Size = new Size(innerWidth, lineHeight), ForeColor = Color.FromArgb(35, 65, 82) };
+        y += lineHeight;
+        TrackBar gapSlider = new TrackBar { AutoSize = false, Location = new Point(margin, y), Size = new Size(innerWidth, sliderHeight),
             Minimum = 0, Maximum = 20, TickStyle = TickStyle.None, Value = buttonGap };
-        Label buttonHeading = new Label { Text = "按钮与快捷键", Location = new Point(24, 286), AutoSize = true,
+        y += sliderHeight + 20;
+        Label buttonHeading = new Label { Text = "按钮与快捷键", Location = new Point(margin, y), Size = new Size(innerWidth, lineHeight),
             Font = new Font("Microsoft YaHei UI", 10f, FontStyle.Bold), ForeColor = Color.FromArgb(35, 65, 82) };
-        Panel buttons = new Panel { Location = new Point(20, 315), Size = new Size(440, 228),
+        y += lineHeight + 6;
+        Panel buttons = new Panel { Location = new Point(margin, y), Size = new Size(innerWidth, rowHeight * labels.Length + 2),
             BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle };
         CheckBox[] checks = new CheckBox[labels.Length];
         ShortcutRecorder[] recorders = new ShortcutRecorder[labels.Length];
         for (int i = 0; i < labels.Length; i++)
         {
-            int y = i * 37;
+            int rowY = i * rowHeight;
             checks[i] = new CheckBox { Text = settingNames[i], Checked = (visibleMask & (1 << i)) != 0,
-                Location = new Point(14, y + 5), Size = new Size(160, 28), BackColor = Color.White };
-            recorders[i] = new ShortcutRecorder(shortcutTexts[i]) { Location = new Point(218, y + 2), Size = new Size(196, 25),
+                Location = new Point(14, rowY + 2), Size = new Size(innerWidth / 2 - 18, rowHeight - 4), BackColor = Color.White };
+            recorders[i] = new ShortcutRecorder(shortcutTexts[i]) { Location = new Point(innerWidth / 2, rowY + 2),
                 Font = new Font("Segoe UI", 10f) };
+            recorders[i].Size = new Size(innerWidth / 2 - 14, Math.Min(rowHeight - 4, recorders[i].PreferredHeight));
+            recorders[i].Top = rowY + (rowHeight - recorders[i].Height) / 2;
             buttons.Controls.Add(checks[i]);
             buttons.Controls.Add(recorders[i]);
-            if (i < labels.Length - 1) buttons.Controls.Add(new Panel { Location = new Point(14, y + 36),
-                Size = new Size(400, 1), BackColor = Color.FromArgb(235, 239, 242) });
+            if (i < labels.Length - 1) buttons.Controls.Add(new Panel { Location = new Point(14, rowY + rowHeight - 1),
+                Size = new Size(innerWidth - 28, 1), BackColor = Color.FromArgb(235, 239, 242) });
         }
+        y += buttons.Height + 18;
+        content.AutoScrollMinSize = new Size(0, y);
         Action update = delegate
         {
             int mask = 0;
@@ -539,10 +560,17 @@ internal sealed class FloatingBar : Form
                 update();
             };
         }
-        Button save = new Button { Text = "保存设置", Location = new Point(336, 565), Size = new Size(124, 32),
+        int footerHeight = Math.Max(64, settings.Font.Height + 34);
+        int actionHeight = Math.Max(34, settings.Font.Height + 14);
+        int saveWidth = Math.Max(104, TextRenderer.MeasureText("保存设置", settings.Font).Width + 24);
+        int cancelWidth = Math.Max(72, TextRenderer.MeasureText("取消", settings.Font).Width + 24);
+        Panel footer = new Panel { Dock = DockStyle.Bottom, Height = footerHeight };
+        Button save = new Button { Text = "保存设置", Location = new Point(width - margin - saveWidth, (footerHeight - actionHeight) / 2),
+            Size = new Size(saveWidth, actionHeight),
             FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(31, 130, 177), ForeColor = Color.White };
         save.FlatAppearance.BorderSize = 0;
-        Button cancel = new Button { Text = "取消", Location = new Point(252, 565), Size = new Size(72, 32),
+        Button cancel = new Button { Text = "取消", Location = new Point(save.Left - 12 - cancelWidth, save.Top),
+            Size = new Size(cancelWidth, actionHeight),
             FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = Color.FromArgb(49, 75, 90) };
         cancel.FlatAppearance.BorderColor = Color.FromArgb(213, 224, 230);
         bool saved = false;
@@ -585,8 +613,15 @@ internal sealed class FloatingBar : Form
             }
             if (positionSave.Enabled) { positionSave.Stop(); SavePosition(); }
         };
-        settings.Controls.AddRange(new Control[] { hint, opacityLabel, opacitySlider, sizeLabel, sizeSlider,
-            gapLabel, gapSlider, buttonHeading, buttons, save, cancel });
+        content.Controls.AddRange(new Control[] { hint, opacityLabel, opacitySlider, sizeLabel, sizeSlider,
+            gapLabel, gapSlider, buttonHeading, buttons });
+        footer.Controls.AddRange(new Control[] { save, cancel });
+        settings.Controls.Add(content);
+        settings.Controls.Add(footer);
+        footer.SendToBack();
+        settings.ClientSize = new Size(width, Math.Min(y + footerHeight, Math.Max(280, area.Height - 32)));
+        settings.Location = new Point(area.Left + (area.Width - settings.Width) / 2,
+            area.Top + (area.Height - settings.Height) / 2);
         update();
         settings.Show();
         Native.ShowWindow(settings.Handle, 5);
