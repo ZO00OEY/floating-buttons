@@ -8,6 +8,38 @@ using System.Windows.Forms;
 internal sealed class ScreenshotOverlay : Form
 {
     private enum Tool { Freehand, Line, Rectangle }
+    private sealed class ToolButton : Button
+    {
+        internal Tool Kind;
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            float scale = Math.Min((Width - 14) / 24f, (Height - 14) / 24f);
+            e.Graphics.TranslateTransform((Width - 24 * scale) / 2f, (Height - 24 * scale) / 2f);
+            e.Graphics.ScaleTransform(scale, scale);
+            using (Pen pen = new Pen(ForeColor, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round })
+            {
+                if (Kind == Tool.Freehand)
+                {
+                    e.Graphics.DrawPolygon(pen, new Point[] { new Point(19, 3), new Point(21, 5),
+                        new Point(10, 16), new Point(6, 17), new Point(7, 13) });
+                    e.Graphics.DrawLine(pen, 4, 21, 18, 21);
+                }
+                else if (Kind == Tool.Line)
+                {
+                    e.Graphics.DrawLine(pen, 4, 19, 20, 5);
+                    using (Brush endpoint = new SolidBrush(ForeColor))
+                    {
+                        e.Graphics.FillEllipse(endpoint, 2, 17, 4, 4);
+                        e.Graphics.FillEllipse(endpoint, 18, 3, 4, 4);
+                    }
+                }
+                else e.Graphics.DrawRectangle(pen, 4, 5, 16, 14);
+            }
+        }
+    }
     private sealed class Mark
     {
         internal Tool Tool;
@@ -19,9 +51,13 @@ internal sealed class ScreenshotOverlay : Form
     private readonly Bitmap desktop;
     private readonly Rectangle desktopBounds;
     private readonly List<Mark> marks = new List<Mark>();
-    private readonly FlowLayoutPanel toolbar = new FlowLayoutPanel();
-    private readonly Button penButton, lineButton, boxButton;
-    private Tool tool = Tool.Freehand;
+    private readonly Panel toolbar = new Panel();
+    private readonly FlowLayoutPanel actions = new FlowLayoutPanel(), options = new FlowLayoutPanel();
+    private readonly ToolButton penButton, lineButton, boxButton;
+    private readonly Panel linePreview = new Panel();
+    private readonly List<Button> swatches = new List<Button>();
+    private readonly ToolTip hints = new ToolTip();
+    private Tool? tool;
     private int penWidth = 4;
     private Color penColor = Color.Red;
     private Point start;
@@ -42,39 +78,79 @@ internal sealed class ScreenshotOverlay : Form
         KeyPreview = true;
         DoubleBuffered = true;
         Cursor = Cursors.Cross;
-        toolbar.AutoSize = true;
-        toolbar.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        toolbar.WrapContents = true;
-        toolbar.Padding = new Padding(5);
         toolbar.BackColor = Color.FromArgb(245, 248, 251);
         toolbar.BorderStyle = BorderStyle.FixedSingle;
         toolbar.Visible = false;
-        penButton = AddButton("画笔", delegate { SelectTool(Tool.Freehand); });
-        lineButton = AddButton("直线", delegate { SelectTool(Tool.Line); });
-        boxButton = AddButton("矩形", delegate { SelectTool(Tool.Rectangle); });
-        ComboBox widths = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList,
-            Font = new Font("Microsoft YaHei UI", 9f), Margin = new Padding(3, 4, 3, 3) };
-        widths.Width = TextRenderer.MeasureText("12 像素", widths.Font).Width + SystemInformation.VerticalScrollBarWidth + 16;
-        widths.Items.AddRange(new object[] { "2 像素", "4 像素", "8 像素", "12 像素" });
-        widths.SelectedIndex = 1;
-        widths.SelectedIndexChanged += delegate { penWidth = new int[] { 2, 4, 8, 12 }[widths.SelectedIndex]; };
-        toolbar.Controls.Add(widths);
-        AddButton("颜色", delegate
+        actions.AutoSize = options.AutoSize = true;
+        actions.AutoSizeMode = options.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        actions.WrapContents = options.WrapContents = true;
+        actions.Margin = options.Margin = Padding.Empty;
+        penButton = AddToolButton(Tool.Freehand, "画笔");
+        lineButton = AddToolButton(Tool.Line, "直线");
+        boxButton = AddToolButton(Tool.Rectangle, "矩形");
+        AddActionButton("撤销", delegate { if (marks.Count > 0) { marks.RemoveAt(marks.Count - 1); Invalidate(selection); } });
+        AddActionButton("重选", delegate { marks.Clear(); selection = Rectangle.Empty; tool = null;
+            options.Visible = false; toolbar.Visible = false; Invalidate(); });
+        Button confirm = AddActionButton("确认", delegate { CopySelection(); });
+        confirm.BackColor = Color.FromArgb(31, 130, 177);
+        confirm.ForeColor = Color.White;
+        AddActionButton("取消", delegate { Close(); });
+        linePreview.Size = new Size(74, 38);
+        linePreview.BackColor = Color.White;
+        linePreview.BorderStyle = BorderStyle.FixedSingle;
+        linePreview.Margin = new Padding(3);
+        linePreview.Paint += delegate(object sender, PaintEventArgs paint)
+        {
+            paint.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using (Pen preview = new Pen(penColor, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                paint.Graphics.DrawLine(preview, 12, linePreview.Height / 2, linePreview.Width - 12, linePreview.Height / 2);
+        };
+        options.Controls.Add(linePreview);
+        TrackBar thickness = new TrackBar { AutoSize = false, Minimum = 1, Maximum = 16, Value = penWidth,
+            TickStyle = TickStyle.None, Size = new Size(132, 38), Margin = new Padding(3) };
+        thickness.ValueChanged += delegate { penWidth = thickness.Value; linePreview.Invalidate(); };
+        options.Controls.Add(thickness);
+        options.Controls.Add(new Label { Text = "颜色", AutoSize = true, TextAlign = ContentAlignment.MiddleCenter,
+            Font = new Font("Microsoft YaHei UI", 9f), Margin = new Padding(7, 11, 3, 3) });
+        foreach (Color color in new Color[] { Color.Black, Color.Red, Color.Orange, Color.Gold,
+            Color.ForestGreen, Color.DeepSkyBlue, Color.RoyalBlue, Color.MediumPurple })
+        {
+            Button swatch = new Button { Size = new Size(28, 28), BackColor = color,
+                FlatStyle = FlatStyle.Flat, Margin = new Padding(2, 8, 2, 2), Cursor = Cursors.Hand,
+                AccessibleName = "选择" + color.Name + "颜色" };
+            swatch.FlatAppearance.BorderColor = Color.FromArgb(161, 174, 184);
+            swatch.Click += delegate { SetColor(color); };
+            hints.SetToolTip(swatch, color.Name);
+            swatches.Add(swatch);
+            options.Controls.Add(swatch);
+        }
+        Button moreColors = AddActionButton("更多", delegate
         {
             using (ColorDialog dialog = new ColorDialog { Color = penColor, FullOpen = true })
-                if (dialog.ShowDialog(this) == DialogResult.OK) penColor = dialog.Color;
-        });
-        AddButton("撤销", delegate { if (marks.Count > 0) { marks.RemoveAt(marks.Count - 1); Invalidate(selection); } });
-        AddButton("重选", delegate { marks.Clear(); selection = Rectangle.Empty; toolbar.Visible = false; Invalidate(); });
-        Button copy = AddButton("复制", delegate { CopySelection(); });
-        copy.BackColor = Color.FromArgb(31, 130, 177);
-        copy.ForeColor = Color.White;
-        AddButton("取消", delegate { Close(); });
+                if (dialog.ShowDialog(this) == DialogResult.OK) SetColor(dialog.Color);
+        }, options);
+        hints.SetToolTip(moreColors, "自定义颜色");
+        options.Visible = false;
+        toolbar.Controls.Add(actions);
+        toolbar.Controls.Add(options);
         Controls.Add(toolbar);
-        SelectTool(Tool.Freehand);
+        SetColor(penColor);
+        LayoutToolbar();
     }
 
-    private Button AddButton(string title, Action action)
+    private ToolButton AddToolButton(Tool kind, string title)
+    {
+        ToolButton button = new ToolButton { Kind = kind, Size = new Size(44, 40), Margin = new Padding(3),
+            FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = Color.FromArgb(38, 67, 83),
+            Cursor = Cursors.Hand, AccessibleName = title };
+        button.FlatAppearance.BorderColor = Color.FromArgb(210, 222, 230);
+        button.Click += delegate { SelectTool(kind); };
+        hints.SetToolTip(button, title);
+        actions.Controls.Add(button);
+        return button;
+    }
+
+    private Button AddActionButton(string title, Action action, FlowLayoutPanel parent = null)
     {
         Font font = new Font("Microsoft YaHei UI", 9f);
         Button button = new Button { Text = title,
@@ -84,7 +160,7 @@ internal sealed class ScreenshotOverlay : Form
             BackColor = Color.White, Cursor = Cursors.Hand };
         button.FlatAppearance.BorderColor = Color.FromArgb(210, 222, 230);
         button.Click += delegate { action(); };
-        toolbar.Controls.Add(button);
+        (parent ?? actions).Controls.Add(button);
         return button;
     }
 
@@ -94,6 +170,31 @@ internal sealed class ScreenshotOverlay : Form
         penButton.BackColor = choice == Tool.Freehand ? Color.FromArgb(207, 235, 249) : Color.White;
         lineButton.BackColor = choice == Tool.Line ? Color.FromArgb(207, 235, 249) : Color.White;
         boxButton.BackColor = choice == Tool.Rectangle ? Color.FromArgb(207, 235, 249) : Color.White;
+        options.Visible = true;
+        LayoutToolbar();
+        PositionToolbar();
+    }
+
+    private void SetColor(Color color)
+    {
+        penColor = color;
+        foreach (Button swatch in swatches)
+        {
+            bool selected = swatch.BackColor.ToArgb() == color.ToArgb();
+            swatch.FlatAppearance.BorderColor = selected ? Color.FromArgb(31, 130, 177) : Color.FromArgb(161, 174, 184);
+            swatch.FlatAppearance.BorderSize = selected ? 3 : 1;
+        }
+        linePreview.Invalidate();
+    }
+
+    private void LayoutToolbar()
+    {
+        actions.Location = new Point(5, 5);
+        actions.PerformLayout();
+        options.Location = new Point(5, actions.Bottom + 5);
+        options.PerformLayout();
+        toolbar.Size = new Size(Math.Max(actions.Width, tool.HasValue ? options.Width : 0) + 12,
+            (tool.HasValue ? options.Bottom : actions.Bottom) + 6);
     }
 
     internal static Rectangle SelectionBounds(Point a, Point b)
@@ -114,7 +215,8 @@ internal sealed class ScreenshotOverlay : Form
             return;
         }
         if (!selection.Contains(e.Location)) return;
-        drawing = new Mark { Tool = tool, Width = penWidth, Color = penColor };
+        if (!tool.HasValue) return;
+        drawing = new Mark { Tool = tool.Value, Width = penWidth, Color = penColor };
         drawing.Points.Add(e.Location);
         Capture = true;
     }
@@ -161,13 +263,13 @@ internal sealed class ScreenshotOverlay : Form
     private void PositionToolbar()
     {
         toolbar.Visible = true;
-        toolbar.PerformLayout();
         Point selectedScreen = new Point(desktopBounds.Left + selection.Left, desktopBounds.Top + selection.Top);
         Rectangle monitor = Screen.FromPoint(selectedScreen).Bounds;
         Rectangle visible = Rectangle.Intersect(ClientRectangle, new Rectangle(monitor.Left - desktopBounds.Left,
             monitor.Top - desktopBounds.Top, monitor.Width, monitor.Height));
-        toolbar.MaximumSize = new Size(Math.Max(300, visible.Width - 16), 0);
-        toolbar.PerformLayout();
+        int maxRowWidth = Math.Max(1, visible.Width - 24);
+        actions.MaximumSize = options.MaximumSize = new Size(maxRowWidth, 0);
+        LayoutToolbar();
         int left = Math.Max(visible.Left,
             Math.Min(visible.Right - toolbar.Width, selection.Left + (selection.Width - toolbar.Width) / 2));
         int below = selection.Bottom + 8;
@@ -259,7 +361,7 @@ internal sealed class ScreenshotOverlay : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) desktop.Dispose();
+        if (disposing) { hints.Dispose(); desktop.Dispose(); }
         base.Dispose(disposing);
     }
 }
