@@ -106,7 +106,7 @@ internal sealed class ScreenshotOverlay : Form
                 paint.Graphics.DrawLine(preview, 12, linePreview.Height / 2, linePreview.Width - 12, linePreview.Height / 2);
         };
         options.Controls.Add(linePreview);
-        TrackBar thickness = new TrackBar { AutoSize = false, Minimum = 1, Maximum = 16, Value = penWidth,
+        TrackBar thickness = new TrackBar { AutoSize = false, Minimum = 1, Maximum = 8, Value = penWidth,
             TickStyle = TickStyle.None, Size = new Size(132, 38), Margin = new Padding(3) };
         thickness.ValueChanged += delegate { penWidth = thickness.Value; linePreview.Invalidate(); };
         options.Controls.Add(thickness);
