@@ -42,6 +42,8 @@ internal static class Native
     [DllImport("user32.dll", SetLastError = true)] internal static extern bool UpdateLayeredWindow(IntPtr window, IntPtr destinationDC,
         ref POINT destination, ref SIZE size, IntPtr sourceDC, ref POINT source, uint colorKey, ref BLEND blend, uint flags);
     [DllImport("user32.dll")] internal static extern uint SendInput(uint count, INPUT[] inputs, int size);
+    [DllImport("user32.dll", SetLastError = true)] internal static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint key);
+    [DllImport("user32.dll")] internal static extern bool UnregisterHotKey(IntPtr window, int id);
     [StructLayout(LayoutKind.Sequential)] internal struct INPUT { public uint type; public INPUTDATA data; }
     [StructLayout(LayoutKind.Explicit)] internal struct INPUTDATA
     {
@@ -101,6 +103,20 @@ internal sealed class Shortcut
             SetKey(ref up[i].data.keyboard, keys[keys.Length - 1 - i], true);
         }
     }
+    internal bool TryGlobalHotkey(out uint modifiers, out uint key)
+    {
+        modifiers = key = 0;
+        foreach (ushort part in keys)
+        {
+            if (part == (ushort)Keys.ControlKey || part == (ushort)Keys.LControlKey || part == (ushort)Keys.RControlKey) modifiers |= 2;
+            else if (part == (ushort)Keys.Menu || part == (ushort)Keys.LMenu || part == (ushort)Keys.RMenu) modifiers |= 1;
+            else if (part == (ushort)Keys.ShiftKey || part == (ushort)Keys.LShiftKey || part == (ushort)Keys.RShiftKey) modifiers |= 4;
+            else if (part == (ushort)Keys.LWin || part == (ushort)Keys.RWin) modifiers |= 8;
+            else if (key == 0) key = part;
+            else return false;
+        }
+        return modifiers != 0 && key != 0;
+    }
     private static void SetKey(ref Native.KEYBDINPUT input, ushort key, bool released)
     {
         if (key == (ushort)Keys.RControlKey)
@@ -120,6 +136,7 @@ internal sealed class Shortcut
 internal sealed class ShortcutRecorder : TextBox
 {
     internal string Value { get; private set; }
+    internal bool AllowEmpty { get; set; }
     private bool recording;
     private Keys rawKey;
     private int rawKeyData;
@@ -141,7 +158,7 @@ internal sealed class ShortcutRecorder : TextBox
         Cursor = Cursors.Hand;
     }
     internal static string Display(string value)
-    { return value.Replace("RControlKey", "右 Ctrl").Replace("LControlKey", "左 Ctrl")
+    { return value.Length == 0 ? "未绑定" : value.Replace("RControlKey", "右 Ctrl").Replace("LControlKey", "左 Ctrl")
         .Replace("Escape", "Esc").Replace("LWin", "Win").Replace("RWin", "Win").Replace("+", " + "); }
     private void BeginRecording()
     {
@@ -242,6 +259,15 @@ internal sealed class ShortcutRecorder : TextBox
         }
         if (released) return;
         string prefix = ModifierChord();
+        if (AllowEmpty && key == Keys.Escape && prefix.Length == 0)
+        {
+            Value = "";
+            Text = Display(Value);
+            recording = false;
+            BackColor = Color.White;
+            StopHook();
+            return;
+        }
         string candidate = prefix.Length == 0 ? key.ToString() : prefix + "+" + key;
         try { Finish(candidate); }
         catch (ArgumentException) { Text = "此按键不支持，请重试"; }
@@ -301,6 +327,7 @@ internal sealed class FloatingBar : Form
     private int downTick;
     private bool dragging, moved;
     private bool exitRequested;
+    private bool screenshotHotkeyRegistered, screenshotHotkeyConflict, screenshotOpen, shown;
     private int hover = -1;
     private Action pending;
     private Form settings;
@@ -311,14 +338,14 @@ internal sealed class FloatingBar : Form
     private Point? savedPosition = LoadPosition();
     private int circleDiameter, circleGap, circlePadding;
 
-    internal FloatingBar(Shortcut screenshot, Shortcut paste, EventWaitHandle showRequest = null)
+    internal FloatingBar(Shortcut paste, EventWaitHandle showRequest = null)
     {
         shortcutTexts = new string[shortcutKeys.Length];
         shortcuts = new Shortcut[shortcutKeys.Length];
         for (int i = 0; i < shortcutKeys.Length; i++)
         {
             shortcutTexts[i] = ReadSetting(shortcutKeys[i]) ?? defaultShortcuts[i];
-            shortcuts[i] = i == 2 ? screenshot : i == 4 ? paste : new Shortcut(shortcutTexts[i]);
+            shortcuts[i] = i == 2 ? null : i == 4 ? paste : new Shortcut(shortcutTexts[i]);
         }
         windowEvent = OnWindowEvent;
         this.showRequest = showRequest;
@@ -441,11 +468,15 @@ internal sealed class FloatingBar : Form
     {
         base.OnShown(e);
         ApplyLayout((int)Native.GetDpiForWindow(Handle));
+        shown = true;
+        RegisterScreenshotHotkey();
         if (showRequest == null) return;
         foregroundHook = Native.SetWinEventHook(3, 3, IntPtr.Zero, windowEvent, 0, 0, 2);
         reorderHook = Native.SetWinEventHook(0x8004, 0x8004, IntPtr.Zero, windowEvent, 0, 0, 2);
         Reveal();
-        tray.ShowBalloonTip(3000, "悬浮按钮已启动", "按钮已显示。双击托盘图标可找回，右键可退出。", ToolTipIcon.Info);
+        tray.ShowBalloonTip(3000, "悬浮按钮已启动", screenshotHotkeyConflict
+            ? "截图组合键已被占用并清空；点击截图按钮仍可使用。"
+            : "按钮已显示。双击托盘图标可找回，右键可退出。", ToolTipIcon.Info);
         showRegistration = ThreadPool.RegisterWaitForSingleObject(showRequest, delegate
         {
             try { BeginInvoke((MethodInvoker)delegate { if (!IsDisposed) Reveal(); }); }
@@ -472,6 +503,11 @@ internal sealed class FloatingBar : Form
             settings.WindowState = FormWindowState.Normal;
             settings.Show(); Native.ShowWindow(settings.Handle, 5);
             settings.BringToFront(); settings.Activate(); return;
+        }
+        if (screenshotHotkeyRegistered)
+        {
+            Native.UnregisterHotKey(Handle, 1);
+            screenshotHotkeyRegistered = false;
         }
         int originalOpacity = backgroundOpacity, originalSize = buttonSize, originalGap = buttonGap, originalMask = visibleMask;
         settings = new Form { Text = "悬浮按钮设置", AutoScaleMode = AutoScaleMode.None,
@@ -522,6 +558,7 @@ internal sealed class FloatingBar : Form
                 Location = new Point(14, rowY + 2), Size = new Size(innerWidth / 2 - 18, rowHeight - 4), BackColor = Color.White };
             recorders[i] = new ShortcutRecorder(shortcutTexts[i]) { Location = new Point(innerWidth / 2, rowY + 2),
                 Font = new Font("Segoe UI", 10f) };
+            if (i == 2) recorders[i].AllowEmpty = true;
             recorders[i].Size = new Size(innerWidth / 2 - 14, Math.Min(rowHeight - 4, recorders[i].PreferredHeight));
             recorders[i].Top = rowY + (rowHeight - recorders[i].Height) / 2;
             buttons.Controls.Add(checks[i]);
@@ -588,7 +625,13 @@ internal sealed class FloatingBar : Form
                 Shortcut[] updated = new Shortcut[shortcutKeys.Length];
                 for (int i = 0; i < shortcutKeys.Length; i++)
                 {
-                    updated[i] = new Shortcut(recorders[i].Value);
+                    if (i != 2) updated[i] = new Shortcut(recorders[i].Value);
+                    else if (recorders[i].Value.Length > 0)
+                    {
+                        uint modifiers, key;
+                        if (!new Shortcut(recorders[i].Value).TryGlobalHotkey(out modifiers, out key))
+                            throw new ArgumentException("截图快捷键需要组合键，例如 Ctrl+Alt+Z。");
+                    }
                     entries[i + 6] = shortcutKeys[i] + "=" + recorders[i].Value;
                 }
                 WriteSettings(entries);
@@ -597,6 +640,9 @@ internal sealed class FloatingBar : Form
                     shortcutTexts[i] = recorders[i].Value;
                     shortcuts[i] = updated[i];
                 }
+                RegisterScreenshotHotkey();
+                if (screenshotHotkeyConflict && showRequest != null)
+                    tray.ShowBalloonTip(3000, "截图快捷键未绑定", "组合键已被占用；点击截图按钮仍可使用。", ToolTipIcon.Warning);
                 savedPosition = Location;
                 saved = true; settings.Close();
             }
@@ -610,6 +656,7 @@ internal sealed class FloatingBar : Form
                 backgroundOpacity = originalOpacity; buttonSize = originalSize;
                 buttonGap = originalGap; visibleMask = originalMask;
                 ApplyLayout((int)Native.GetDpiForWindow(Handle));
+                RegisterScreenshotHotkey();
             }
             if (positionSave.Enabled) { positionSave.Stop(); SavePosition(); }
         };
@@ -657,6 +704,70 @@ internal sealed class FloatingBar : Form
         catch (UnauthorizedAccessException) { }
     }
     protected override bool ShowWithoutActivation { get { return true; } }
+    private void RegisterScreenshotHotkey()
+    {
+        screenshotHotkeyConflict = false;
+        if (screenshotHotkeyRegistered)
+        {
+            Native.UnregisterHotKey(Handle, 1);
+            screenshotHotkeyRegistered = false;
+        }
+        string configured = shortcutTexts[2];
+        if (configured.Length == 0) return;
+        uint modifiers, key;
+        if (new Shortcut(configured).TryGlobalHotkey(out modifiers, out key)
+            && Native.RegisterHotKey(Handle, 1, modifiers | 0x4000, key))
+        {
+            screenshotHotkeyRegistered = true;
+            if (showRequest != null) tray.Text = "悬浮按钮 · 正在运行";
+            return;
+        }
+        // 快捷键被其他程序占用时退让；截图按钮本身仍可使用。
+        screenshotHotkeyConflict = true;
+        shortcutTexts[2] = "";
+        WriteSettings("screenshot=");
+        if (showRequest != null) tray.Text = "悬浮按钮 · 截图快捷键未绑定";
+    }
+    private void QueueScreenshot()
+    {
+        if (screenshotOpen || pending != null) return;
+        pending = BeginScreenshot;
+        delay.Start();
+    }
+    private void BeginScreenshot()
+    {
+        if (screenshotOpen) return;
+        screenshotOpen = true;
+        bool wasVisible = Visible;
+        Hide();
+        System.Windows.Forms.Timer captureDelay = new System.Windows.Forms.Timer { Interval = 140 };
+        captureDelay.Tick += delegate
+        {
+            captureDelay.Stop();
+            captureDelay.Dispose();
+            Bitmap bitmap = null;
+            try
+            {
+                Rectangle bounds = SystemInformation.VirtualScreen;
+                bitmap = new Bitmap(bounds.Width, bounds.Height);
+                using (Graphics graphics = Graphics.FromImage(bitmap))
+                    graphics.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+                using (ScreenshotOverlay overlay = new ScreenshotOverlay(bitmap, bounds))
+                {
+                    bitmap = null;
+                    overlay.ShowDialog();
+                }
+            }
+            catch (Exception error) { MessageBox.Show(error.Message, "截图失败"); }
+            finally
+            {
+                if (bitmap != null) bitmap.Dispose();
+                screenshotOpen = false;
+                if (wasVisible && !IsDisposed) Reveal();
+            }
+        };
+        captureDelay.Start();
+    }
     private void OnWindowEvent(IntPtr hook, uint eventType, IntPtr window, int objectId, int childId, uint thread, uint time)
     {
         if (!IsHandleCreated || IsDisposed || !Native.IsWindowVisible(Handle)) return;
@@ -698,6 +809,11 @@ internal sealed class FloatingBar : Form
     }
     protected override void WndProc(ref Message message)
     {
+        if (message.Msg == 0x312 && message.WParam.ToInt32() == 1)
+        {
+            QueueScreenshot();
+            return;
+        }
         if (message.Msg == 0x21)
         {
             message.Result = new IntPtr(3);
@@ -718,6 +834,16 @@ internal sealed class FloatingBar : Form
         int dpi = (int)Native.GetDpiForWindow(Handle);
         ApplyLayout(dpi);
         Native.SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x13);
+        if (shown && (settings == null || settings.IsDisposed || !settings.Visible)) RegisterScreenshotHotkey();
+    }
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        if (screenshotHotkeyRegistered)
+        {
+            Native.UnregisterHotKey(Handle, 1);
+            screenshotHotkeyRegistered = false;
+        }
+        base.OnHandleDestroyed(e);
     }
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -893,6 +1019,7 @@ internal sealed class FloatingBar : Form
         if (pending != null) return;
         int index = HitIndex(e.Location);
         if (index < 0) return;
+        if (index == 2) { QueueScreenshot(); return; }
         Shortcut shortcut = shortcuts[index];
         pending = shortcut.Send;
         delay.Start();
@@ -904,6 +1031,7 @@ internal sealed class FloatingBar : Form
             if (showRegistration != null) showRegistration.Unregister(null);
             if (foregroundHook != IntPtr.Zero) Native.UnhookWinEvent(foregroundHook);
             if (reorderHook != IntPtr.Zero) Native.UnhookWinEvent(reorderHook);
+            if (screenshotHotkeyRegistered) Native.UnregisterHotKey(Handle, 1);
             tray.Visible = false;
             if (settings != null) settings.Dispose();
             if (tray.ContextMenuStrip != null) tray.ContextMenuStrip.Dispose();
@@ -927,17 +1055,16 @@ internal static class Program
             if (!created) { showRequest.Set(); return; }
             try
             {
-                string shot = "Ctrl+Alt+Z", paste = "Ctrl+V";
+                string paste = "Ctrl+V";
                 string config = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "shortcuts.ini");
                 if (File.Exists(config)) foreach (string raw in File.ReadAllLines(config))
                 {
                     string line = raw.Trim();
                     if (line.StartsWith("#") || !line.Contains("=")) continue;
                     string[] pair = line.Split(new char[] { '=' }, 2);
-                    if (pair[0].Trim() == "screenshot") shot = pair[1].Trim();
                     if (pair[0].Trim() == "paste") paste = pair[1].Trim();
                 }
-                using (FloatingBar bar = new FloatingBar(new Shortcut(shot), new Shortcut(paste), showRequest)) Application.Run(bar);
+                using (FloatingBar bar = new FloatingBar(new Shortcut(paste), showRequest)) Application.Run(bar);
             }
             catch (Exception ex) { MessageBox.Show(ex.Message, "悬浮按钮启动失败"); }
         }
@@ -952,6 +1079,8 @@ internal static class Program
             && Check(new Shortcut("Ctrl+C"), Keys.ControlKey, Keys.C)
             && Check(new Shortcut("Ctrl+V"), Keys.ControlKey, Keys.V)
             && Check(new Shortcut("Ctrl+Shift+LWin"), Keys.ControlKey, Keys.ShiftKey, Keys.LWin)
+            && CheckHotkey("Ctrl+Alt+Z", 3, Keys.Z)
+            && !CheckHotkey("RControlKey", 2, Keys.None)
             && CheckRightControl()
             && ShortcutRecorder.PhysicalModifier(Keys.ControlKey, 0x01000000) == "RControlKey"
             && ShortcutRecorder.PhysicalModifier(Keys.ControlKey, 0) == "Ctrl"
@@ -964,6 +1093,7 @@ internal static class Program
             && FloatingBar.LayoutSize(96, 100, 3, 6) == new Size(179, 29)
             && FloatingBar.LayoutSize(96, 100, 3, 1) == new Size(29, 29)
             && FloatingBar.LayoutSize(96, 200, 10, 1).Width > FloatingBar.LayoutSize(96, 100, 3, 1).Width
+            && ScreenshotOverlay.SelectionBounds(new Point(90, 70), new Point(20, 10)) == new Rectangle(20, 10, 70, 60)
             && string.Join("|", FloatingBar.MergeSettings(new string[] { "screenshot=Ctrl+Alt+Z", "opacity=80" },
                 "opacity=70", "position_x=12")) == "screenshot=Ctrl+Alt+Z|opacity=70|position_x=12";
         File.WriteAllText(resultPath, "shortcut_sequences_and_drag_bounds_valid=" + passed + Environment.NewLine + "passed=" + passed);
@@ -979,6 +1109,12 @@ internal static class Program
                 || up[i].type != 1 || up[i].data.keyboard.key != (ushort)expected[expected.Length - 1 - i] || up[i].data.keyboard.flags != 2)
                 return false;
         return true;
+    }
+    private static bool CheckHotkey(string value, uint expectedModifiers, Keys expectedKey)
+    {
+        uint modifiers, key;
+        return new Shortcut(value).TryGlobalHotkey(out modifiers, out key)
+            && modifiers == expectedModifiers && key == (uint)expectedKey;
     }
     private static bool CheckRightControl()
     {
