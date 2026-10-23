@@ -361,7 +361,7 @@ internal sealed class FloatingBar : Form
         Location = new Point(area.Right - Width - 28, area.Top + area.Height / 3);
         BackColor = Color.FromArgb(232, 234, 237);
         DoubleBuffered = true;
-        menu.Items.Add("显示悬浮按钮", null, delegate { Reveal(); });
+        menu.Items.Add("在当前屏幕居中显示", null, delegate { RevealCentered(); });
         menu.Items.Add("隐藏悬浮按钮", null, delegate { Hide(); });
         menu.Items.Add("设置", null, delegate { ShowSettings(); });
         menu.Items.Add("退出", null, delegate { Exit(); });
@@ -374,10 +374,10 @@ internal sealed class FloatingBar : Form
             tray.Icon = Icon;
             tray.Text = "悬浮按钮 · 正在运行";
             tray.ContextMenuStrip = new ContextMenuStrip();
-            tray.ContextMenuStrip.Items.Add("显示悬浮按钮", null, delegate { Reveal(); });
+            tray.ContextMenuStrip.Items.Add("在当前屏幕居中显示", null, delegate { RevealCentered(); });
             tray.ContextMenuStrip.Items.Add("设置", null, delegate { ShowSettings(); });
             tray.ContextMenuStrip.Items.Add("退出", null, delegate { Exit(); });
-            tray.DoubleClick += delegate { Reveal(); };
+            tray.DoubleClick += delegate { RevealCentered(); };
             tray.Visible = true;
         }
         delay.Interval = 140;
@@ -677,12 +677,19 @@ internal sealed class FloatingBar : Form
         settings.BeginInvoke((MethodInvoker)delegate
         { if (!settings.IsDisposed) { settings.BringToFront(); settings.Activate(); } });
     }
+    internal static Point CenterPosition(Rectangle area, Size size)
+    { return new Point(area.Left + (area.Width - size.Width) / 2, area.Top + (area.Height - size.Height) / 2); }
+    private void RevealCentered()
+    {
+        savedPosition = CenterPosition(Screen.FromPoint(Cursor.Position).WorkingArea, Size);
+        Reveal();
+        SavePosition();
+    }
     internal void Reveal()
     {
         Screen screen = CurrentScreen();
         Rectangle area = screen.WorkingArea;
-        Point position = savedPosition ?? new Point(area.Left + (area.Width - Width) / 2,
-            area.Top + (area.Height - Height) / 2);
+        Point position = savedPosition ?? CenterPosition(area, Size);
         Location = KeepOnScreen(position, Size, Screen.FromPoint(position).Bounds);
         Show();
         // 明确显示，覆盖启动器传入的 SW_HIDE；置顶且不激活。
@@ -1088,6 +1095,7 @@ internal static class Program
             && ShortcutRecorder.Display("Ctrl+Shift+LWin") == "Ctrl + Shift + Win"
             && FloatingBar.KeepOnScreen(new Point(95, 95), new Size(20, 20), new Rectangle(0, 0, 100, 100)) == new Point(80, 80)
             && FloatingBar.KeepOnScreen(new Point(-10, -10), new Size(20, 20), new Rectangle(0, 0, 100, 100)) == Point.Empty
+            && FloatingBar.CenterPosition(new Rectangle(-1920, 0, 1920, 1080), new Size(400, 40)) == new Point(-1160, 520)
             && !FloatingBar.CanDrag(99, 11, 0) && !FloatingBar.CanDrag(100, 10, 0)
             && FloatingBar.CanDrag(100, 11, 0)
             && FloatingBar.LayoutSize(96, 100, 3, 6) == new Size(179, 29)
